@@ -75,7 +75,8 @@ class MiniGPTModel(nn.Module):
         return logits
 
     @torch.no_grad()
-    def generate(self, input_ids, max_new_tokens=50, end_idx=3, temperature=0.7):
+    def generate(self, input_ids, max_new_tokens=50, end_idx=3,
+                 temperature=0.7, top_k=0, repetition_penalty=1.0):
         self.eval()
         generated = input_ids.clone()
 
@@ -86,10 +87,24 @@ class MiniGPTModel(nn.Module):
             logits = self.forward(generated)
             next_logits = logits[:, -1, :]
 
+            # Penalize already-generated tokens to reduce repetition
+            if repetition_penalty != 1.0:
+                for token_id in set(generated[0].tolist()):
+                    if next_logits[0, token_id] > 0:
+                        next_logits[0, token_id] /= repetition_penalty
+                    else:
+                        next_logits[0, token_id] *= repetition_penalty
+
             if temperature <= 0.1:
                 next_token = next_logits.argmax(dim=-1, keepdim=True)
             else:
                 next_logits = next_logits / temperature
+
+                # Top-k filtering: keep only the k most likely tokens
+                if top_k > 0:
+                    top_vals, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
+                    next_logits[next_logits < top_vals[:, -1:]] = float('-inf')
+
                 probs = torch.softmax(next_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
 
